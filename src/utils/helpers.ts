@@ -123,10 +123,10 @@ export function parsePriceCSV(text: string): PriceItem[] {
     if (cols.length <= Math.max(idx.market, idx.class, idx.short, idx.price, idx.tmc, idx.code)) continue;
 
     const marketRaw = cols[idx.market].trim().toUpperCase();
-    if (marketRaw !== 'БЕЛАРУСЬ' && marketRaw !== 'РОССИЯ') continue;
+    if (!marketRaw) continue;
 
     items.push({
-      market: marketRaw as 'БЕЛАРУСЬ' | 'РОССИЯ',
+      market: marketRaw,
       classТМЦ: cols[idx.class].trim(),
       tmcShort: cols[idx.short].trim(),
       tmc: cols[idx.tmc].trim(),
@@ -196,13 +196,13 @@ export function parseCombinedCSV(text: string): { priceItems: PriceItem[]; tvcIt
     if (cols.length < 7) continue;
 
     const marketRaw = cols[0].trim().toUpperCase();
-    if (marketRaw !== 'БЕЛАРУСЬ' && marketRaw !== 'РОССИЯ') continue;
+    if (!marketRaw) continue;
 
     const code = cols[4].trim();
     const tvc = parseNumber(cols[5]);
 
     priceItems.push({
-      market: marketRaw as 'БЕЛАРУСЬ' | 'РОССИЯ',
+      market: marketRaw,
       classТМЦ: cols[1].trim(),
       tmcShort: cols[2].trim(),
       tmc: cols[3].trim(),
@@ -224,10 +224,22 @@ export function parseCombinedCSV(text: string): { priceItems: PriceItem[]; tvcIt
 }
 
 export function calcRow(row: TableRow, params: Params): CalcResult {
-  const { euroRate, dealerDiscount } = params;
+  const { euroRate, dealerDiscount, isEuroMode } = params;
   const { item, qty, clientPrice, clientTvc } = row;
-  const priceEur = item.price / euroRate;
-  const clientPriceEur = clientPrice / euroRate;
+
+  let priceEur: number;
+  let clientPriceEur: number;
+
+  if (isEuroMode) {
+    // Режим "ОБЩИЙ" — всё уже в евро, курс не применяется
+    priceEur = item.price;
+    clientPriceEur = clientPrice;
+  } else {
+    // Режим БЕЛАРУСЬ/РОССИЯ — цены в рублях, конвертируем в евро
+    priceEur = item.price / euroRate;
+    clientPriceEur = clientPrice / euroRate;
+  }
+
   const costPriceList = qty * priceEur;
   const costClient = qty * clientPriceEur;
   const costClientDealer = costClient * (1 - dealerDiscount / 100);
@@ -313,7 +325,7 @@ export function calcTotals(rows: TableRow[], params: Params): Totals {
 
 export function exportToCSV(market: string, rows: TableRow[], params: Params): void {
   const lines: string[] = [];
-  lines.push(['№', 'Код', 'Наименование', 'Класс', 'Кол-во', 'Скидка/Наценка%', 'Цена₽', 'По прайсу€', 'Клиента€', 'Кл.+Дил.€', 'TVC€', 'МД прайс', 'МД клиента', 'МД кл.+дил.', 'МР% прайс', 'МР% клиента', 'МР% кл.+дил.'].join(';'));
+  lines.push(['№', 'Код', 'Наименование', 'Класс', 'Кол-во', 'Скидка/Наценка%', 'Цена сделки€', 'TVC/ед.€', 'По прайсу€', 'Клиента€', 'Кл.+Дил.€', 'Прайс/ед.€', 'TVC итого€', 'МД прайс', 'МД клиента', 'МД кл.+дил.', 'Откл.кл.', 'Откл.кл.+дил.', 'МР% прайс', 'МР% клиента', 'МР% кл.+дил.'].join(';'));
   rows.forEach((row, idx) => {
     const calc = calcRow(row, params);
     const discountLabel = row.clientDiscount > 0
@@ -327,13 +339,17 @@ export function exportToCSV(market: string, rows: TableRow[], params: Params): v
       row.qty,
       discountLabel,
       fmt(row.clientPrice, 2),
+      fmt(row.clientTvc, 2),
       fmt(calc.costPriceList, 2),
       fmt(calc.costClient, 2),
       fmt(calc.costClientDealer, 2),
+      fmt(calc.priceEur, 4),
       fmt(calc.tvcTotal, 2),
       fmt(calc.mdPriceList, 2),
       fmt(calc.mdClient, 2),
       fmt(calc.mdClientDealer, 2),
+      fmt(calc.devMdClient, 2),
+      fmt(calc.devMdClientDealer, 2),
       fmtPct(calc.mrPriceList),
       fmtPct(calc.mrClient),
       fmtPct(calc.mrClientDealer),
@@ -345,14 +361,17 @@ export function exportToCSV(market: string, rows: TableRow[], params: Params): v
     ? `+${totals.effectiveDiscount.toFixed(1)}%`
     : `${totals.effectiveDiscount.toFixed(1)}%`;
   lines.push([
-    'ИТОГО', '', '', '', '', effDiscountLabel, '', '',
+    'ИТОГО', '', '', '', totals.totalQty.toString(), effDiscountLabel, '', '',
     fmt(totals.totalCostPriceList, 2),
     fmt(totals.totalCostClient, 2),
     fmt(totals.totalCostClientDealer, 2),
+    '',
     fmt(totals.totalTvc, 2),
     fmt(totals.totalMdPriceList, 2),
     fmt(totals.totalMdClient, 2),
     fmt(totals.totalMdClientDealer, 2),
+    fmt(totals.totalDevMdClient, 2),
+    fmt(totals.totalDevMdClientDealer, 2),
     fmtPct(totals.mrPriceListTotal),
     fmtPct(totals.mrClientTotal),
     fmtPct(totals.mrClientDealerTotal),
@@ -361,27 +380,27 @@ export function exportToCSV(market: string, rows: TableRow[], params: Params): v
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `РМ_${market === 'БЕЛАРУСЬ' ? 'BY' : 'RU'}_${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.csv`;
+  a.download = `РМ_${market}_${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 export const demoData = `
-Market,ClassТМЦ,ТМЦ_кратко,ТМЦ,Код,TVC,Цена
-БЕЛАРУСЬ,Трубы,Труба ПЭ 100 PN10 d25,Труба полиэтиленовая ПЭ 100 PN10 d25 SDR17,TRB-PE100-25-10,1.25,285.50
-БЕЛАРУСЬ,Трубы,Труба ПЭ 100 PN10 d32,Труба полиэтиленовая ПЭ 100 PN10 d32 SDR17,TRB-PE100-32-10,1.75,365.00
-БЕЛАРУСЬ,Трубы,Труба ПЭ 100 PN10 d50,Труба полиэтиленовая ПЭ 100 PN10 d50 SDR17,TRB-PE100-50-10,3.45,720.00
-БЕЛАРУСЬ,Трубы,Труба ПЭ 100 PN10 d63,Труба полиэтиленовая ПЭ 100 PN10 d63 SDR17,TRB-PE100-63-10,5.20,1080.50
-БЕЛАРУСЬ,Фитинги,Муфта d25,Муфта соединительная ПЭ d25,FIT-CPL-25,0.45,85.00
-БЕЛАРУСЬ,Фитинги,Муфта d32,Муфта соединительная ПЭ d32,FIT-CPL-32,0.75,135.50
-БЕЛАРУСЬ,Фитинги,Уголок 90° d25,Уголок ПЭ 90° d25,FIT-ELB-25-90,0.55,110.00
-БЕЛАРУСЬ,Фитинги,Уголок 90° d32,Уголок ПЭ 90° d32,FIT-ELB-32-90,0.95,185.00
-БЕЛАРУСЬ,Клапаны,Кран шаровый d25,Кран шаровый ПЭ d25 PN16,VAL-BALL-25,3.20,450.00
-БЕЛАРУСЬ,Клапаны,Кран шаровый d32,Кран шаровый ПЭ d32 PN16,VAL-BALL-32,4.80,680.50
-РОССИЯ,Трубы,Труба ПЭ 100 PN10 d25,Труба полиэтиленовая ПЭ 100 PN10 d25 SDR17,TRB-PE100-25-10,1.25,275.50
-РОССИЯ,Трубы,Труба ПЭ 100 PN10 d32,Труба полиэтиленовая ПЭ 100 PN10 d32 SDR17,TRB-PE100-32-10,1.75,355.00
-РОССИЯ,Трубы,Труба ПЭ 100 PN10 d50,Труба полиэтиленовая ПЭ 100 PN10 d50 SDR17,TRB-PE100-50-10,3.45,695.00
-РОССИЯ,Фитинги,Муфта d25,Муфта соединительная ПЭ d25,FIT-CPL-25,0.45,82.00
-РОССИЯ,Фитинги,Муфта d32,Муфта соединительная ПЭ d32,FIT-CPL-32,0.75,128.50
-РОССИЯ,Клапаны,Кран шаровый d25,Кран шаровый ПЭ d25 PN16,VAL-BALL-25,3.20,435.00
+Прайс,Класс ТМЦ,ТМЦ кратко,ТМЦ,Код,TVC,Цена
+ОБЩИЙ,Трубы,Труба ПЭ 100 PN10 d25,Труба полиэтиленовая ПЭ 100 PN10 d25 SDR17,TRB-PE100-25-10,1.25,2.85
+ОБЩИЙ,Трубы,Труба ПЭ 100 PN10 d32,Труба полиэтиленовая ПЭ 100 PN10 d32 SDR17,TRB-PE100-32-10,1.75,3.65
+ОБЩИЙ,Трубы,Труба ПЭ 100 PN10 d50,Труба полиэтиленовая ПЭ 100 PN10 d50 SDR17,TRB-PE100-50-10,3.45,7.20
+ОБЩИЙ,Трубы,Труба ПЭ 100 PN10 d63,Труба полиэтиленовая ПЭ 100 PN10 d63 SDR17,TRB-PE100-63-10,5.20,10.80
+БЕЛАРУСЬ,Фитинги,Муфта d25,Муфта соединительная ПЭ d25,FIT-CPL-25,0.45,0.85
+БЕЛАРУСЬ,Фитинги,Муфта d32,Муфта соединительная ПЭ d32,FIT-CPL-32,0.75,1.35
+БЕЛАРУСЬ,Фитинги,Уголок 90° d25,Уголок ПЭ 90° d25,FIT-ELB-25-90,0.55,1.10
+БЕЛАРУСЬ,Фитинги,Уголок 90° d32,Уголок ПЭ 90° d32,FIT-ELB-32-90,0.95,1.85
+БЕЛАРУСЬ,Клапаны,Кран шаровый d25,Кран шаровый ПЭ d25 PN16,VAL-BALL-25,3.20,4.50
+БЕЛАРУСЬ,Клапаны,Кран шаровый d32,Кран шаровый ПЭ d32 PN16,VAL-BALL-32,4.80,6.80
+РОССИЯ,Трубы,Труба ПЭ 100 PN10 d25,Труба полиэтиленовая ПЭ 100 PN10 d25 SDR17,TRB-PE100-25-10,1.25,2.75
+РОССИЯ,Трубы,Труба ПЭ 100 PN10 d32,Труба полиэтиленовая ПЭ 100 PN10 d32 SDR17,TRB-PE100-32-10,1.75,3.55
+РОССИЯ,Трубы,Труба ПЭ 100 PN10 d50,Труба полиэтиленовая ПЭ 100 PN10 d50 SDR17,TRB-PE100-50-10,3.45,6.95
+РОССИЯ,Фитинги,Муфта d25,Муфта соединительная ПЭ d25,FIT-CPL-25,0.45,0.82
+РОССИЯ,Фитинги,Муфта d32,Муфта соединительная ПЭ d32,FIT-CPL-32,0.75,1.28
+РОССИЯ,Клапаны,Кран шаровый d25,Кран шаровый ПЭ d25 PN16,VAL-BALL-25,3.20,4.35
 `;

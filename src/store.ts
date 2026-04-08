@@ -1,14 +1,15 @@
 import { create } from 'zustand';
-import { Market, CombinedItem, TableRow, PriceItem, TvcItem } from './types';
+import { CombinedItem, TableRow, PriceItem, TvcItem, Params } from './types';
 
 interface AppState {
-  activeTab: Market;
+  activeTab: string;
+  tabs: string[];
   priceItems: PriceItem[];
   tvcItems: TvcItem[];
   rows: TableRow[];
   selectedCodes: Set<string>;
-  selectedCodesByMarket: { [key in Market]: Set<string> };
-  params: { [key in Market]: { euroRate: number; dealerDiscount: number } };
+  selectedCodesByMarket: Record<string, Set<string>>;
+  params: Record<string, Params>;
   filtersOpen: boolean;
   classFilter: Set<string>;
   tmcShortFilter: Set<string>;
@@ -16,11 +17,11 @@ interface AppState {
   searchText: string;
   openDropdown: string | null;
 
-  setActiveTab: (tab: Market) => void;
+  setActiveTab: (tab: string) => void;
   setPriceItems: (items: PriceItem[]) => void;
   setTvcItems: (items: TvcItem[]) => void;
   setSelectedCodes: (codes: Set<string>) => void;
-  setParams: (market: Market, params: { euroRate?: number; dealerDiscount?: number }) => void;
+  setParams: (market: string, params: Partial<Params>) => void;
   setFiltersOpen: (open: boolean) => void;
   setClassFilter: (filter: Set<string>) => void;
   setTmcShortFilter: (filter: Set<string>) => void;
@@ -35,19 +36,26 @@ interface AppState {
   getCombinedItems: () => CombinedItem[];
 }
 
+/** Параметры по умолчанию для каждого типа вкладки */
+function defaultParams(tab: string): Params {
+  if (tab === 'ОБЩИЙ') {
+    return { euroRate: 1, dealerDiscount: 0, isEuroMode: true };
+  }
+  return { euroRate: 94.4, dealerDiscount: 0, isEuroMode: false };
+}
+
 export const useStore = create<AppState>((set, get) => ({
-  activeTab: 'БЕЛАРУСЬ',
+  activeTab: 'ОБЩИЙ',
+  tabs: ['ОБЩИЙ', 'БЕЛАРУСЬ', 'РОССИЯ'],
   priceItems: [],
   tvcItems: [],
   rows: [],
   selectedCodes: new Set(),
-  selectedCodesByMarket: {
-    БЕЛАРУСЬ: new Set(),
-    РОССИЯ: new Set(),
-  },
+  selectedCodesByMarket: { 'ОБЩИЙ': new Set(), 'БЕЛАРУСЬ': new Set(), 'РОССИЯ': new Set() },
   params: {
-    БЕЛАРУСЬ: { euroRate: 94.4, dealerDiscount: 0 },
-    РОССИЯ: { euroRate: 94.4, dealerDiscount: 0 },
+    'ОБЩИЙ': defaultParams('ОБЩИЙ'),
+    'БЕЛАРУСЬ': defaultParams('БЕЛАРУСЬ'),
+    'РОССИЯ': defaultParams('РОССИЯ'),
   },
   filtersOpen: true,
   classFilter: new Set(),
@@ -58,9 +66,35 @@ export const useStore = create<AppState>((set, get) => ({
 
   setActiveTab: (tab) => set((state) => ({
     activeTab: tab,
-    selectedCodes: new Set(state.selectedCodesByMarket[tab]),
+    selectedCodes: new Set(state.selectedCodesByMarket[tab] || new Set()),
   })),
-  setPriceItems: (items) => set({ priceItems: items }),
+
+  setPriceItems: (items) => set((state) => {
+    // Определяем уникальные рынки из загруженных данных
+    const uniqueTabs = Array.from(new Set(items.map(i => i.market))).sort();
+    // Всегда сохраняем все три вкладки
+    const allTabs = ['ОБЩИЙ', 'БЕЛАРУСЬ', 'РОССИЯ', ...uniqueTabs.filter(t => !['ОБЩИЙ', 'БЕЛАРУСЬ', 'РОССИЯ'].includes(t))];
+    
+    const newParams = { ...state.params };
+    const newCodes = { ...state.selectedCodesByMarket };
+    
+    allTabs.forEach(tab => {
+      if (!newParams[tab]) newParams[tab] = defaultParams(tab);
+      if (!newCodes[tab]) newCodes[tab] = new Set();
+    });
+
+    const nextTab = allTabs.includes(state.activeTab) ? state.activeTab : allTabs[0];
+
+    return {
+      priceItems: items,
+      tabs: allTabs,
+      activeTab: nextTab,
+      params: newParams,
+      selectedCodesByMarket: newCodes,
+      selectedCodes: new Set(newCodes[nextTab]),
+    };
+  }),
+
   setTvcItems: (items) => set({ tvcItems: items }),
 
   setSelectedCodes: (newCodes) => {
@@ -122,7 +156,7 @@ export const useStore = create<AppState>((set, get) => ({
   addRows: (newRows) => set((state) => {
     const activeCodes = new Set(state.selectedCodes);
     const activeTab = state.activeTab;
-    const marketCodes = new Set(state.selectedCodesByMarket[activeTab]);
+    const marketCodes = new Set(state.selectedCodesByMarket[activeTab] || new Set());
 
     newRows
       .filter(r => r.item.market === activeTab)
@@ -143,18 +177,21 @@ export const useStore = create<AppState>((set, get) => ({
 
   removeRow: (id) => set((state) => {
     const row = state.rows.find(r => r.id === id);
+    if (!row) return state;
+
+    const rowMarket = row.item.market;
+    
     const newSelectedCodes = new Set(state.selectedCodes);
-    if (row && row.item.market === state.activeTab) {
+    if (rowMarket === state.activeTab) {
       newSelectedCodes.delete(row.item.code);
     }
 
-    const newSelectedByMarket = {
-      ...state.selectedCodesByMarket,
-      [row?.item.market || state.activeTab]: new Set(
-        state.selectedCodesByMarket[row?.item.market || state.activeTab]
-      ),
-    };
-    if (row) newSelectedByMarket[row.item.market].delete(row.item.code);
+    const newSelectedByMarket = { ...state.selectedCodesByMarket };
+    if (newSelectedByMarket[rowMarket]) {
+      const marketSet = new Set(newSelectedByMarket[rowMarket]);
+      marketSet.delete(row.item.code);
+      newSelectedByMarket[rowMarket] = marketSet;
+    }
 
     return {
       rows: state.rows.filter(r => r.id !== id),
@@ -178,19 +215,24 @@ export const useStore = create<AppState>((set, get) => ({
       },
     };
   }),
-  clearAll: () => set({
-    priceItems: [],
-    tvcItems: [],
-    rows: [],
-    selectedCodes: new Set(),
-    selectedCodesByMarket: {
-      БЕЛАРУСЬ: new Set(),
-      РОССИЯ: new Set(),
-    },
-    classFilter: new Set(),
-    tmcShortFilter: new Set(),
-    tmcFilter: new Set(),
-    searchText: '',
+  
+  clearAll: () => set((state) => {
+    const emptySelected = Object.keys(state.selectedCodesByMarket).reduce((acc, tab) => {
+      acc[tab] = new Set();
+      return acc;
+    }, {} as Record<string, Set<string>>);
+    
+    return {
+      priceItems: [],
+      tvcItems: [],
+      rows: [],
+      selectedCodes: new Set(),
+      selectedCodesByMarket: emptySelected,
+      classFilter: new Set(),
+      tmcShortFilter: new Set(),
+      tmcFilter: new Set(),
+      searchText: '',
+    };
   }),
 
   getCombinedItems: () => {

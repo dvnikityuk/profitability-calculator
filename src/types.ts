@@ -6,7 +6,7 @@ export interface TvcItem {
 }
 
 export interface PriceItem {
-  market: 'БЕЛАРУСЬ' | 'РОССИЯ';
+  market: string;
   classТМЦ: string;
   tmc: string;
   tmcShort: string;
@@ -31,6 +31,8 @@ export interface TableRow {
 export interface Params {
   euroRate: number;
   dealerDiscount: number;
+  /** Если true — валюта EUR, курс не применяется (для вкладки "ОБЩИЙ") */
+  isEuroMode: boolean;
 }
 
 export interface CalcResult {
@@ -67,5 +69,5 @@ export interface Totals {
   mrClientDealerTotal: number;
 }
 
-export type Market = 'БЕЛАРУСЬ' | 'РОССИЯ';
+export type Market = string;
 export type FilterType = 'class' | 'tmcShort' | 'tmc';

@@ -1,10 +1,7 @@
 
-import { useStore } from '../store';
+
 
 export const Legend: React.FC = () => {
-  const { activeTab, params } = useStore();
-  const currentParams = params[activeTab];
-
   return (
     <div 
       className="flex-shrink-0 flex items-center gap-5 px-5 py-2 border-t text-[11px]"
@@ -29,7 +26,7 @@ export const Legend: React.FC = () => {
          + — наценка сверх прайса
        </span>
        <span className="ml-auto font-mono" style={{ color: 'var(--brand-gray-dark)' }}>
-         Цена₽ ÷ {currentParams.euroRate} = Цена€ · TVC — в евро
+         Все расчёты ведутся в евро
        </span>
     </div>
   );

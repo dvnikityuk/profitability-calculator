@@ -2,20 +2,23 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { UploadModal } from './UploadModal';
 
-const TABS = [
-  { id: 'БЕЛАРУСЬ', label: 'Беларусь', flag: '🇧🇾' },
-  { id: 'РОССИЯ', label: 'Россия', flag: '🇷🇺' },
-] as const;
-
 export function Header() {
-  const { activeTab, setActiveTab, priceItems, tvcItems, clearAll } = useStore();
+  const { activeTab, tabs, setActiveTab, priceItems, tvcItems, clearAll } = useStore();
   const [modalOpen, setModalOpen] = useState(false);
 
-  const counts = {
-    БЕЛАРУСЬ: priceItems.filter(i => i.market === 'БЕЛАРУСЬ').length,
-    РОССИЯ: priceItems.filter(i => i.market === 'РОССИЯ').length,
+  const getFlag = (m: string) => {
+    if (m === 'БЕЛАРУСЬ') return '🇧🇾';
+    if (m === 'РОССИЯ') return '🇷🇺';
+    if (m === 'ОБЩИЙ') return '🌍';
+    return '📁';
   };
-  const totalPriceCount = counts.БЕЛАРУСЬ + counts.РОССИЯ;
+
+  const counts = tabs.reduce((acc, tab) => {
+    acc[tab] = priceItems.filter(i => i.market === tab).length;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalPriceCount = priceItems.length;
   const totalTvcCount = tvcItems.length;
   const hasData = totalPriceCount > 0 || totalTvcCount > 0;
 
@@ -38,19 +41,20 @@ export function Header() {
           </div>
 
           {/* Tabs */}
-          <div className="flex items-end gap-1 px-5 self-end">
-            {TABS.map((tab) => {
-              const count = counts[tab.id];
-              const active = activeTab === tab.id;
+          <div className="flex items-end gap-1 px-5 self-end overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            {tabs.map((tab) => {
+              const count = counts[tab] || 0;
+              const active = activeTab === tab;
+              const label = tab.charAt(0).toUpperCase() + tab.slice(1).toLowerCase();
               return (
                 <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-5 py-2 rounded-t-xl border-x border-t transition-all select-none ${active ? 'tab-active shadow-md' : 'tab-inactive'}`}
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-t-xl border-x border-t transition-all select-none flex-shrink-0 ${active ? 'tab-active shadow-md' : 'tab-inactive'}`}
                   style={{ fontSize: '12px', fontWeight: active ? 700 : 500, borderColor: active ? 'transparent' : 'rgba(255,255,255,0.08)' }}
                 >
-                  <span className="text-base">{tab.flag}</span>
-                  <span>{tab.label}</span>
+                  <span className="text-base">{getFlag(tab)}</span>
+                  <span>{label}</span>
                   {count > 0 && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: active ? 'rgba(58,58,56,0.18)' : 'rgba(254,217,0,0.15)', color: active ? 'var(--ui-900)' : 'var(--brand-yellow)' }}>
                       {count}
