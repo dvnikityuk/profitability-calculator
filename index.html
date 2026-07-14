@@ -1,12 +1,555 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Калькулятор рентабельности продаж РМ</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Калькулятор рентабельности</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e0e3e8;
+    --border-light: #eef0f3;
+    --head-bg: #f7f8fa;
+    --head-text: #4a5568;
+    --row-alt: #fafbfc;
+    --text: #2d3748;
+    --text-dim: #a0aec0;
+    --accent: #3b82f6;
+    --accent-light: #eff6ff;
+    --green: #16a34a;
+    --red: #dc2626;
+    --yellow-bg: #fffbeb;
+    --yellow-border: #fcd34d;
+    --total-bg: #eef2ff;
+    --total-border: #c7d2fe;
+    --hover: #f0f4ff;
+    --radius: 4px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app { max-width: 100%; padding: 16px 20px; }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .header-title { font-size: 16px; font-weight: 700; color: #1a202c; letter-spacing: -0.3px; }
+  .header-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 400; }
+  .header-actions { display: flex; gap: 6px; }
+
+  .btn {
+    padding: 6px 14px; font-size: 12px; font-weight: 500;
+    font-family: var(--font); border-radius: var(--radius);
+    border: 1px solid transparent; cursor: pointer;
+    transition: all .15s; color: #fff; line-height: 1; white-space: nowrap;
+  }
+  .btn:hover { filter: brightness(0.92); }
+  .btn:active { transform: scale(0.98); }
+  .btn-orange { background: #e67e22; }
+  .btn-green { background: #27ae60; }
+
+  .controls {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+    display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end;
+  }
+  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+  .ctrl-label { font-size: 10px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .ctrl-row { display: flex; gap: 4px; align-items: center; }
+
+  .ctrl-input {
+    width: 88px; padding: 5px 8px; font-size: 13px;
+    font-family: var(--mono); text-align: center;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: #fff; color: var(--text);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .ctrl-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.1); }
+
+  .ctrl-btn {
+    padding: 5px 10px; font-size: 11px; font-weight: 500;
+    font-family: var(--font); border-radius: var(--radius);
+    border: 1px solid var(--accent); background: var(--accent);
+    color: #fff; cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .ctrl-btn:hover { background: #2563eb; }
+
+  .tabs { display: flex; gap: 2px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; font-size: 12px; font-weight: 500;
+    font-family: var(--font); cursor: pointer;
+    border: 1px solid var(--border); border-bottom: none;
+    border-radius: 5px 5px 0 0; background: var(--head-bg);
+    color: var(--text-dim); transition: all .15s; line-height: 1;
+  }
+  .tab:hover { background: #eef0f3; color: var(--text); }
+  .tab.on {
+    background: var(--card); color: var(--accent); font-weight: 600;
+    border-bottom: 1px solid var(--card); margin-bottom: -1px;
+    position: relative; z-index: 2;
+  }
+
+  .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .table-wrap { overflow: auto; max-height: 76vh; }
+
+  table { border-collapse: collapse; width: 100%; min-width: 1400px; }
+
+  col.col-num { width: 32px; }
+  col.col-cls { width: 150px; }
+  col.col-nm { width: 220px; }
+  col.col-qty { width: 72px; }
+  col.col-pct { width: 72px; }
+  col.col-deal { width: 80px; }
+  col.col-pl { width: 76px; }
+  col.col-pe { width: 76px; }
+  col.col-tvc { width: 76px; }
+  col.col-rev { width: 80px; }
+  col.col-md { width: 80px; }
+  col.col-dev { width: 76px; }
+  col.col-mp { width: 62px; }
+
+  th, td {
+    border-right: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+    padding: 0 6px; white-space: nowrap; height: 28px; vertical-align: middle;
+  }
+  th:last-child, td:last-child { border-right: none; }
+  tr:last-child td { border-bottom: none; }
+
+  thead th {
+    background: var(--head-bg); position: sticky; top: 0; z-index: 5;
+    font-size: 10px; font-weight: 600; color: var(--head-text);
+    text-transform: uppercase; letter-spacing: 0.4px;
+    text-align: center; padding: 6px 6px; line-height: 1.25;
+  }
+  thead th.th-left { text-align: left; }
+
+  .rn { text-align: center; color: var(--text-dim); font-size: 10px; font-weight: 400; }
+
+  .sel-cls, .sel-nm {
+    width: 100%; padding: 3px 4px; font-size: 12px;
+    font-family: var(--font); border: 1px solid var(--border);
+    border-radius: var(--radius); background: #fff; color: var(--text);
+    height: 26px; cursor: pointer; transition: border-color .15s;
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a0aec0'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 5px center;
+    padding-right: 18px;
+  }
+  .sel-cls:focus, .sel-nm:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.1); }
+  optgroup { font-weight: 600; font-style: normal; color: #4a5568; font-size: 11px; }
+  option { font-size: 12px; }
+
+  .ti {
+    width: 100%; padding: 3px 4px; font-size: 12px;
+    font-family: var(--mono); border: 1px solid var(--border);
+    border-radius: var(--radius); text-align: right;
+    background: #fff; color: var(--text); height: 26px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .ti-center { text-align: center; }
+  .ti:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.1); }
+  .ti:disabled { background: var(--row-alt); color: var(--text-dim); border-color: var(--border-light); }
+  .tvc-over { background: var(--yellow-bg) !important; border-color: var(--yellow-border) !important; }
+
+  .v {
+    text-align: right; font-family: var(--mono); font-size: 12px;
+    padding-right: 8px; color: var(--text); letter-spacing: -0.2px;
+  }
+  .v-bold { font-weight: 600; }
+  .v-dim { color: var(--text-dim); }
+  .v-pos { color: var(--green); }
+  .v-neg { color: var(--red); }
+
+  tr.row-alt { background: var(--row-alt); }
+  tr:hover { background: var(--hover) !important; }
+
+  tfoot th {
+    background: var(--total-bg); position: sticky; bottom: 0; z-index: 5;
+    font-size: 12px; font-weight: 700; color: #3730a3;
+    padding: 7px 6px; border-bottom: 2px solid var(--total-border);
+    letter-spacing: -0.2px;
+  }
+  tfoot th.th-tot-left { text-align: left; padding-left: 8px; }
+  tfoot .v { font-family: var(--mono); font-size: 12px; font-weight: 700; color: #3730a3; text-align: right; }
+  tfoot .v-pos { color: #15803d; }
+  tfoot .v-neg { color: #b91c1c; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="header">
+    <div>
+      <div class="header-title">Калькулятор рентабельности</div>
+      <div class="header-sub" id="info">Загрузка...</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-orange" onclick="clearAll()">Очистить</button>
+      <button class="btn btn-green" onclick="exportXLSX()">Экспорт Excel</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="ctrl-group">
+      <span class="ctrl-label">Курс EUR/RUB</span>
+      <input type="number" id="rate" value="94.40" step="0.01" min="0.01" class="ctrl-input" onchange="render()">
+    </div>
+    <div class="ctrl-group">
+      <span class="ctrl-label">Скидка / наценка, %</span>
+      <div class="ctrl-row">
+        <input type="number" id="gpct" value="0" step="0.1" class="ctrl-input" style="width:72px">
+        <button class="ctrl-btn" onclick="applyPct()">Применить</button>
+      </div>
+    </div>
+    <div class="ctrl-group">
+      <span class="ctrl-label">Скидка дилера, %</span>
+      <input type="number" id="dpct" value="0" step="0.1" class="ctrl-input" style="width:72px" onchange="render()">
+    </div>
+  </div>
+
+  <div id="tabs" class="tabs"></div>
+
+  <div class="table-card">
+    <div class="table-wrap">
+      <table id="maintable">
+        <colgroup>
+          <col class="col-num">
+          <col class="col-cls">
+          <col class="col-nm">
+          <col class="col-qty">
+          <col class="col-pct">
+          <col class="col-deal">
+          <col class="col-pl" id="col-pl">
+          <col class="col-pe">
+          <col class="col-tvc">
+          <col class="col-rev">
+          <col class="col-md">
+          <col class="col-md">
+          <col class="col-md">
+          <col class="col-dev">
+          <col class="col-dev">
+          <col class="col-mp">
+          <col class="col-mp">
+          <col class="col-mp">
+        </colgroup>
+        <thead><tr id="header-row"></tr></thead>
+        <tbody id="tbody"></tbody>
+        <tfoot><tr id="tot-row"></tr></tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const NROWS=15;
+const DATA_URL='data/api-data.json';
+let D=null, aR='', rows=[], byClass={};
+
+const f2=v=>(v==null||isNaN(v))?'':v.toFixed(2);
+const f1=v=>(v==null||isNaN(v))?'':v.toFixed(1);
+
+function isRur(r){return r==='РОССИЯ'||r==='БЕЛАРУСЬ';}
+function curSym(r){return isRur(r)?'\u20BD':'\u20AC';}
+function curCode(r){return isRur(r)?'RUR':'EUR';}
+
+function buildClassMap(){
+  byClass={};
+  for(const p of D.products){
+    if(p.r!==aR)continue;
+    if(!byClass[p.c])byClass[p.c]=[];
+    byClass[p.c].push(p);
+  }
+  for(const c in byClass) byClass[c].sort((a,b)=>a.s.localeCompare(b.s,'ru'));
+}
+
+function getProduct(code){
+  return D.products.find(p=>p.r===aR&&p.k===code)||null;
+}
+
+function onClassChange(i){
+  rows[i].cls=document.getElementById('cls_'+i).value;
+  rows[i].code='';
+  render();
+}
+function onNameChange(i){
+  const code=document.getElementById('nm_'+i).value;
+  rows[i].code=code;
+  if(code&&!rows[i].cls){const pr=getProduct(code);if(pr)rows[i].cls=pr.c;}
+  render();
+}
+function setDeal(i,val,priceLocal){
+  const deal=parseFloat(val);
+  if(isNaN(deal))return;
+  rows[i].p=priceLocal>0?(deal/priceLocal-1)*100:0;
+  render();
+}
+function setPct(i,val){
+  const v=parseFloat(val)||0;
+  if(Math.abs(v-rows[i].p)<0.05)return;
+  rows[i].p=v;
+  render();
+}
+function setTVC(i,val){
+  const v=val.trim();
+  rows[i].tv=(v===''||isNaN(parseFloat(v)))?null:parseFloat(v);
+  render();
+}
+function setQty(i,val){
+  rows[i].q=Math.max(0,parseInt(val)||0);
+  render();
+}
+
+function calc(p,qty,pct,dpct,rate,tvcOverride){
+  const rur=isRur(p.r);
+  const priceLocal=p.p;
+  const dealLocal=priceLocal*(1+pct/100);
+  const conv=rur?1/rate:1;
+  const priceEur=priceLocal*conv;
+  const dealEur=dealLocal*conv;
+  const cdEur=dealEur*(1-dpct/100);
+  const tvc=tvcOverride!==null?tvcOverride:p.v;
+  const tvcT=tvc*qty;
+  const mdP=(priceEur-tvc)*qty;
+  const mdC=(dealEur-tvc)*qty;
+  const mdCD=(cdEur-tvc)*qty;
+  const devC=mdP-mdC;
+  const devCD=mdP-mdCD;
+  const mpP=priceEur>0?(priceEur-tvc)/priceEur*100:0;
+  const mpC=dealEur>0?(dealEur-tvc)/dealEur*100:0;
+  const mpCD=cdEur>0?(cdEur-tvc)/cdEur*100:0;
+  const revP=priceEur*qty;
+  const revC=dealEur*qty;
+  const revCD=cdEur*qty;
+  return {priceLocal,dealLocal,priceEur,dealEur,cdEur,tvc,tvcT,
+    mdP,mdC,mdCD,devC,devCD,mpP,mpC,mpCD,revP,revC,revCD};
+}
+
+function classOpts(sel){
+  let h='<option value="">\u2014</option>';
+  for(const c of D.classes) h+=`<option value="${c}" ${c===sel?'selected':''}>${c}</option>`;
+  return h;
+}
+function nameOpts(row){
+  let h='<option value="">\u2014</option>';
+  if(row.cls&&byClass[row.cls]){
+    for(const p of byClass[row.cls])
+      h+=`<option value="${p.k}" ${p.k===row.code?'selected':''}>${p.s} [${p.k}]</option>`;
+  } else if(!row.cls){
+    for(const cls of D.classes){
+      if(!byClass[cls])continue;
+      h+=`<optgroup label="${cls}">`;
+      for(const p of byClass[cls])
+        h+=`<option value="${p.k}" ${p.k===row.code?'selected':''}>${p.s} [${p.k}]</option>`;
+      h+='</optgroup>';
+    }
+  }
+  return h;
+}
+
+function buildHeader(){
+  const cs=curSym(aR), rur=isRur(aR);
+  const plCol=document.getElementById('col-pl');
+  plCol.style.display=rur?'':'none';
+
+  let h='<th class="th-left" style="width:32px">#</th>';
+  h+='<th class="th-left" style="width:150px">Класс</th>';
+  h+='<th class="th-left" style="width:220px">Наименование</th>';
+  h+='<th style="width:72px">Кол-во</th>';
+  h+='<th style="width:72px">%</th>';
+  h+=`<th style="width:80px">Цена сделки, ${cs}</th>`;
+  if(rur)h+=`<th style="width:76px">Прайс, ${cs}</th>`;
+  h+='<th style="width:76px">Прайс, \u20AC</th>';
+  h+='<th style="width:76px">TVC, \u20AC</th>';
+  h+='<th style="width:80px">Выручка, \u20AC</th>';
+  h+='<th style="width:80px">МД прайс</th>';
+  h+='<th style="width:80px">МД клиент</th>';
+  h+='<th style="width:80px">МД кл.+дил.</th>';
+  h+='<th style="width:76px">Откл.кл.</th>';
+  h+='<th style="width:76px">Откл.кл.+дил.</th>';
+  h+='<th style="width:62px">MP%<br>прайс</th>';
+  h+='<th style="width:62px">MP%<br>клиент</th>';
+  h+='<th style="width:62px">MP%<br>кл.+дил.</th>';
+  document.getElementById('header-row').innerHTML=h;
+}
+
+function render(){
+  buildHeader();
+  const rate=gR(), dp=gD(), rur=isRur(aR);
+  let html='';
+
+  for(let i=0;i<NROWS;i++){
+    const row=rows[i];
+    const prod=row.code?getProduct(row.code):null;
+    const hasProd=!!prod;
+    const show=hasProd&&row.q>0;
+    const alt=i%2?'row-alt':'';
+
+    html+=`<tr class="${alt}">`;
+    html+=`<td class="rn">${i+1}</td>`;
+    html+=`<td><select id="cls_${i}" class="sel-cls" onchange="onClassChange(${i})">${classOpts(row.cls)}</select></td>`;
+    html+=`<td><select id="nm_${i}" class="sel-nm" onchange="onNameChange(${i})">${nameOpts(row)}</select></td>`;
+    html+=`<td><input type="number" class="ti ti-center" value="${row.q||''}" min="0" ${hasProd?`onchange="setQty(${i},this.value)"`:'disabled placeholder="0"'}></td>`;
+    html+=`<td><input type="number" class="ti ti-center" value="${hasProd&&row.p?row.p.toFixed(1):''}" step="0.1" ${hasProd?`onchange="setPct(${i},this.value)"`:'disabled'}></td>`;
+
+    if(hasProd){
+      const c=calc(prod,row.q,row.p,dp,rate,row.tv);
+      html+=`<td><input type="number" class="ti" value="${f2(c.dealLocal)}" step="0.01" onchange="setDeal(${i},this.value,${prod.p})"></td>`;
+      if(rur)html+=`<td class="v v-dim">${f2(c.priceLocal)}</td>`;
+      html+=`<td class="v v-dim">${f2(c.priceEur)}</td>`;
+      const tvcOvr=row.tv!==null;
+      const tvcVal=tvcOvr?row.tv:prod.v;
+      html+=`<td><input type="number" class="ti ${tvcOvr?'tvc-over':''}" value="${tvcVal!=null?f2(tvcVal):''}" step="0.01" onchange="setTVC(${i},this.value)" title="${tvcOvr?'Загружено: '+prod.v:''}"></td>`;
+      html+=`<td class="v v-bold">${show?f2(c.revC):''}</td>`;
+      html+=`<td class="v v-bold">${show?f2(c.mdP):''}</td>`;
+      html+=`<td class="v v-bold">${show?f2(c.mdC):''}</td>`;
+      html+=`<td class="v v-bold">${show?f2(c.mdCD):''}</td>`;
+      html+=`<td class="v ${show?(c.devC>=0?'v-pos':'v-neg'):''}">${show?f2(c.devC):''}</td>`;
+      html+=`<td class="v ${show?(c.devCD>=0?'v-pos':'v-neg'):''}">${show?f2(c.devCD):''}</td>`;
+      html+=`<td class="v ${c.mpP>=0?'v-pos':'v-neg'}">${show?f1(c.mpP):''}</td>`;
+      html+=`<td class="v ${c.mpC>=0?'v-pos':'v-neg'}">${show?f1(c.mpC):''}</td>`;
+      html+=`<td class="v ${c.mpCD>=0?'v-pos':'v-neg'}">${show?f1(c.mpCD):''}</td>`;
+    } else {
+      const empty=rur?5:4;
+      for(let e=0;e<empty+9;e++) html+='<td></td>';
+    }
+    html+=`</tr>`;
+  }
+  document.getElementById('tbody').innerHTML=html;
+  calcTotals(rate,dp);
+}
+
+function calcTotals(rate,dp){
+  const rur=isRur(aR);
+  let sQ=0,sRevP=0,sRevC=0,sRevCD=0;
+  let sMP=0,sMC=0,sMCD=0,sDevC=0,sDevCD=0;
+
+  for(let i=0;i<NROWS;i++){
+    const row=rows[i];
+    if(!row.code||row.q<=0)continue;
+    const prod=getProduct(row.code);
+    if(!prod)continue;
+    const c=calc(prod,row.q,row.p,dp,rate,row.tv);
+    sQ+=row.q;
+    sRevP+=c.revP; sRevC+=c.revC; sRevCD+=c.revCD;
+    sMP+=c.mdP; sMC+=c.mdC; sMCD+=c.mdCD;
+    sDevC+=c.devC; sDevCD+=c.devCD;
+  }
+
+  let h='<th class="th-tot-left" style="width:32px"></th>';
+  h+='<th class="th-tot-left" style="width:150px">ИТОГО</th><th></th>';
+  h+=`<th class="v" style="width:72px;text-align:center">${sQ||''}</th>`;
+  h+='<th></th><th></th>';
+  if(rur)h+='<th></th>';
+  h+='<th></th><th></th>';
+  h+=`<th class="v" style="width:80px">${f2(sRevC)}</th>`;
+  h+=`<th class="v" style="width:80px">${f2(sMP)}</th>`;
+  h+=`<th class="v" style="width:80px">${f2(sMC)}</th>`;
+  h+=`<th class="v" style="width:80px">${f2(sMCD)}</th>`;
+  h+=`<th class="v ${sDevC>=0?'v-pos':'v-neg'}" style="width:76px">${f2(sDevC)}</th>`;
+  h+=`<th class="v ${sDevCD>=0?'v-pos':'v-neg'}" style="width:76px">${f2(sDevCD)}</th>`;
+
+  const mpP=sRevP>0?sMP/sRevP*100:0;
+  const mpC=sRevC>0?sMC/sRevC*100:0;
+  const mpCD=sRevCD>0?sMCD/sRevCD*100:0;
+  h+=`<th class="v ${mpP>=0?'v-pos':'v-neg'}" style="width:62px">${sRevP>0?f1(mpP):''}</th>`;
+  h+=`<th class="v ${mpC>=0?'v-pos':'v-neg'}" style="width:62px">${sRevC>0?f1(mpC):''}</th>`;
+  h+=`<th class="v ${mpCD>=0?'v-pos':'v-neg'}" style="width:62px">${sRevCD>0?f1(mpCD):''}</th>`;
+
+  document.getElementById('tot-row').innerHTML=h;
+}
+
+function renderTabs(){
+  document.getElementById('tabs').innerHTML=D.regions.map(r=>
+    `<button class="tab ${r===aR?'on':''}" onclick="aR='${r}';buildClassMap();renderTabs();render()">${r}</button>`
+  ).join('');
+}
+function gR(){return parseFloat(document.getElementById('rate').value)||1;}
+function gD(){return parseFloat(document.getElementById('dpct').value)||0;}
+function applyPct(){
+  const v=parseFloat(document.getElementById('gpct').value)||0;
+  for(let i=0;i<NROWS;i++)if(rows[i].code)rows[i].p=v;
+  render();
+}
+function clearAll(){
+  for(let i=0;i<NROWS;i++)rows[i]={cls:'',code:'',q:0,p:0,tv:null};
+  render();
+}
+
+function exportXLSX(){
+  const rate=gR(),dp=gD(),cc=curCode(aR),rur=isRur(aR);
+  const hdr=['#','Класс','Код','Наименование','Кол-во','Скидка/Наценка %',
+    'Цена сделки ('+cc+')','TVC/ед. \u20AC','TVC исходн. \u20AC',
+    'Прайс/ед. \u20AC','Выручка \u20AC',
+    '\u041C\u0414 прайс \u20AC','\u041C\u0414 клиента \u20AC','\u041C\u0414 кл.+дил. \u20AC',
+    'Откл.кл. \u20AC','Откл.кл.+дил. \u20AC',
+    'MP% прайс','MP% клиента','MP% кл.+дил.'];
+  if(rur) hdr.splice(9,0,'Прайс/ед. ('+cc+')');
+
+  const wsData=[hdr];
+  for(let i=0;i<NROWS;i++){
+    const row=rows[i];
+    if(!row.code||row.q<=0)continue;
+    const prod=getProduct(row.code);
+    if(!prod)continue;
+    const c=calc(prod,row.q,row.p,dp,rate,row.tv);
+    const r=[i+1,prod.c,prod.k,prod.t,row.q,row.p,
+      c.dealLocal,c.tvc,prod.v,
+      c.priceEur,c.revC,
+      c.mdP,c.mdC,c.mdCD,c.devC,c.devCD,
+      Math.round(c.mpP*10)/10,Math.round(c.mpC*10)/10,Math.round(c.mpCD*10)/10];
+    if(rur) r.splice(9,0,c.priceLocal);
+    wsData.push(r);
+  }
+
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+
+  // ширина колонок
+  ws['!cols']=[
+    {wch:4},{wch:22},{wch:10},{wch:45},{wch:7},{wch:14},
+    {wch:14},{wch:12},{wch:14},{wch:14},{wch:14},
+    {wch:14},{wch:14},{wch:14},{wch:14},{wch:14},
+    {wch:10},{wch:10},{wch:10}
+  ];
+  if(rur) ws['!cols'].splice(9,0,{wch:14});
+
+  XLSX.utils.book_append_sheet(wb,ws,'Расчёт');
+  XLSX.writeFile(wb,`calc_${aR}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function init(){
+  try{
+    const r=await fetch(DATA_URL+'?_t='+Date.now());
+    D=await r.json();
+    if(D.regions.length)aR=D.regions[0];
+    rows=Array.from({length:NROWS},()=>({cls:'',code:'',q:0,p:0,tv:null}));
+    buildClassMap();
+    renderTabs();render();
+    document.getElementById('info').textContent=D.products.length+' позиций \u00B7 '+D.regions.join(', ');
+  }catch(e){
+    document.getElementById('info').textContent='Ошибка загрузки: '+e.message;
+  }
+}
+
+init();
+</script>
+</body>
 </html>
