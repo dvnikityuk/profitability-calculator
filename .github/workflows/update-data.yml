@@ -1,0 +1,196 @@
+# Автоматическое обновление данных калькулятора.
+#
+# Как это работает:
+#   1. Вы загружаете новые CSV в папку sample-data/ (через сайт GitHub или git).
+#   2. Этот workflow запускается сам, выполняет scripts/convert-csv.py
+#      и получает свежий data/api-data.json.
+#   3. Если файл изменился — коммитит его в main от имени github-actions[bot].
+#   4. GitHub Pages подхватывает коммит и обновляет сайт (1–2 минуты).
+#
+# Запустить вручную: вкладка Actions → «Обновление данных калькулятора» → Run workflow.
+
+name: Обновление данных калькулятора
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'sample-data/**'
+      - 'scripts/convert-csv.py'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  update:
+    name: CSV → JSON → коммит
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Сгенерировать data/api-data.json из CSV
+        run: |
+          set -euo pipefail
+          cp data/api-data.json /tmp/old-api-data.json 2>/dev/null \
+            || echo '{"regions":[],"classes":[],"products":[]}' > /tmp/old-api-data.json
+          python3 scripts/convert-csv.py
+
+      - name: Проверить результат (защита от пустого или битого JSON)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          with open('data/api-data.json', encoding='utf-8') as f:
+              new = json.load(f)
+          try:
+              with open('/tmp/old-api-data.json', encoding='utf-8') as f:
+                  old_n = len(json.load(f).get('products', []))
+          except Exception:
+              old_n = 0
+          n = len(new.get('products', []))
+          problems = []
+          if n == 0:
+              problems.append('в JSON 0 позиций — скорее всего, в CSV не распознаны колонки '
+                              '(нужны: Прайс, Класс ТМЦ, ТМЦ кратко, ТМЦ, Код, Цена) или файл не в UTF-8')
+          if not new.get('regions'):
+              problems.append('не найдено ни одного региона (колонка «Прайс» пуста)')
+          if old_n and n < old_n * 0.5:
+              problems.append(f'позиций стало {n} вместо {old_n} — сокращение более чем вдвое, похоже на обрезанный файл')
+          if problems:
+              for p in problems:
+                  print(f'::error::{p}')
+              print('Обновление ОТМЕНЕНО, на сайте остаются прежние данные. Проверьте CSV и загрузите заново.')
+              sys.exit(1)
+          print(f'OK: {n} позиций, регионы: {", ".join(new["regions"])}, классов: {len(new["classes"])}')
+          PY
+
+      - name: Отчёт — что изменилось и замечания к CSV
+        continue-on-error: true
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, csv, collections
+
+          PRICE = 'sample-data/Кальлятор РМ Прайс.csv'
+          TVC   = 'sample-data/Кальлятор РМ TVC.csv'
+
+          def load_json(path):
+              try:
+                  with open(path, encoding='utf-8') as f:
+                      d = json.load(f)
+                  return d if isinstance(d, dict) and 'products' in d else None
+              except Exception:
+                  return None
+
+          def read_csv(path, must_have):
+              with open(path, encoding='utf-8-sig', newline='') as f:
+                  rows = list(csv.DictReader(f))
+              if rows and must_have not in rows[0]:
+                  with open(path, encoding='utf-8-sig', newline='') as f:
+                      rows = list(csv.DictReader(f, delimiter=';'))
+              return rows
+
+          def short(codes, n=15):
+              codes = sorted(codes)
+              return ', '.join(codes[:n]) + (' …' if len(codes) > n else '')
+
+          out = []
+          old = load_json('/tmp/old-api-data.json') or {'regions': [], 'classes': [], 'products': []}
+          new = load_json('data/api-data.json')
+
+          if new is None:
+              out.append('## ❌ data/api-data.json не сформирован или повреждён')
+          else:
+              o = {(p['r'], p['k']): p for p in old['products']}
+              n = {(p['r'], p['k']): p for p in new['products']}
+              common  = o.keys() & n.keys()
+              added   = len(n.keys() - o.keys())
+              removed = len(o.keys() - n.keys())
+              names   = sum(1 for k in common if (o[k]['s'], o[k]['t']) != (n[k]['s'], n[k]['t']))
+              prices  = sum(1 for k in common if o[k]['p'] != n[k]['p'])
+              tvcs    = sum(1 for k in common if o[k]['v'] != n[k]['v'])
+              classes = sum(1 for k in common if o[k]['c'] != n[k]['c'])
+              changed = added or removed or names or prices or tvcs or classes
+              out += [
+                  '## ' + ('✅ Данные калькулятора обновлены' if changed else 'ℹ️ Изменений нет — JSON уже соответствует CSV'),
+                  '',
+                  '| | Было | Стало |',
+                  '|---|---:|---:|',
+                  f'| Позиций | {len(o)} | {len(n)} |',
+                  f'| Классов ТМЦ | {len(old["classes"])} | {len(new["classes"])} |',
+                  f'| Регионы | {", ".join(old["regions"]) or "—"} | {", ".join(new["regions"])} |',
+                  '',
+                  f'**Добавлено:** {added} · **Удалено:** {removed} · '
+                  f'**Изменено наименований:** {names} · **цен:** {prices} · **TVC:** {tvcs} · **классов:** {classes}',
+                  '',
+              ]
+
+          warn = []
+          try:
+              rows = read_csv(PRICE, 'Прайс')
+              code = lambda r: (r.get('Код') or '').strip()
+              cnt = collections.Counter(((r.get('Прайс') or '').strip(), code(r)) for r in rows if code(r))
+              dups = [k for k, v in cnt.items() if v > 1]
+              if dups:
+                  warn.append(f'**Дубликаты кодов в прайсе** — {len(dups)} пар «регион + код», в калькулятор попадает '
+                              f'только последняя строка: {short({k[1] for k in dups})}')
+              odd = {code(r) for r in rows
+                     if any((r.get(c) or '').count('"') % 2 for c in ('ТМЦ кратко', 'ТМЦ'))}
+              if odd:
+                  warn.append(f'**Непарная кавычка в наименовании** — {len(odd)} кодов, так и отобразится '
+                              f'в калькуляторе: {short(odd)}')
+              price_codes = {code(r) for r in rows}
+              tvc_rows = read_csv(TVC, 'TVC')
+              orphan = {code(r) for r in tvc_rows if code(r) and code(r) not in price_codes}
+              if orphan:
+                  warn.append(f'**Коды из TVC.csv, которых нет в прайсе** — {len(orphan)}, их TVC никуда '
+                              f'не попадёт: {short(orphan)}')
+          except Exception as e:
+              warn.append(f'Не удалось проверить CSV: {e}')
+
+          if warn:
+              out += ['### ⚠️ Замечания к CSV (не блокируют обновление)', ''] + [f'- {w}' for w in warn] + ['']
+          else:
+              out += ['### ✅ Замечаний к CSV нет', '']
+
+          print('\n'.join(out))
+          PY
+
+      - name: Закоммитить и отправить в main
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3; do
+            git add data/api-data.json
+            if git diff --cached --quiet; then
+              echo "data/api-data.json уже соответствует CSV — коммитить нечего."
+              exit 0
+            fi
+            git commit --quiet -m "Авто: обновление data/api-data.json из CSV"
+            if git push origin HEAD:main; then
+              echo "Готово: data/api-data.json обновлён в main. GitHub Pages обновит сайт через 1–2 минуты."
+              exit 0
+            fi
+            echo "Push отклонён (в main появился новый коммит). Попытка $attempt из 3 — повтор через 10 с…"
+            sleep 10
+            git fetch --quiet origin main
+            git reset --quiet --hard FETCH_HEAD
+            python3 scripts/convert-csv.py
+          done
+
+          echo "::error::Не удалось отправить изменения после 3 попыток. Запустите workflow вручную: Actions → Run workflow."
+          exit 1
